@@ -1,0 +1,1734 @@
+const assert = require ('assert');              // утверждения
+const ganache = require ('ganache-cli');        // тестовая сеть
+const Web3 = require ('web3');                  // библиотека для подключения к ефириуму
+//const web3 = new Web3(ganache.provider());      // настройка провайдера
+
+
+require('events').EventEmitter.defaultMaxListeners = 0;
+
+
+const compiledContract = require('../build/Crowdsale.json');
+
+const compiledToken = require('../build/CRYPTToken.json');
+
+let accounts;
+let contractAddress;
+//console.log(Date());
+
+
+
+describe('Серия тестов для пути развития - софткап не пройден => refunding...', () => {
+    let web3 = new Web3(ganache.provider());      // настройка провайдера
+
+    it('Разворачиваем контракт для тестирования...', async () => {
+
+        accounts = await web3.eth.getAccounts();
+        //    console.log(accounts);
+        //    console.log(await web3.eth.getBalance(accounts[0]));
+            // получаем контракт из скомпилированного ранее файла .json
+        // разворачиваем его в тестовой сети и отправляем транзакцию
+        contract = await new web3.eth.Contract(JSON.parse(compiledContract.interface))
+            .deploy({ data: compiledContract.bytecode })
+            .send({ from: accounts[0], gas: '6000000'});
+    });
+    
+
+    it('Адрес контракта...', async () => {
+        console.log(await contract.options.address);
+    });
+
+    it('Проверка баланса контракта...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        console.log("Balance of contract in Ether: ", cBalance);
+        assert(cBalance == 0);
+    });
+
+    it('Проверка собственника контракта...', async () => {
+        const cOwner = await contract.methods.owner().call();
+        assert.equal(accounts[0], cOwner);
+    });
+
+    it('Получаем стадию контракта, по умолчанию это init', async () => {
+        const myState = await contract.methods.currentState().call({
+            from: accounts[3],
+            gas: "1000000"
+        });
+        assert(myState == 0);
+    });
+
+    it('Запускаем Pre-Sale от постороннего пользователя - revert', async () => {
+        // правильным завершением этого теста является наличие ошибки
+        try {
+            await contract.methods.startPreSale().send({
+                from: accounts[3],
+                gas: "1000000"
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Снова получаем стадию контракта, все еще init', async () => {
+        const myState = await contract.methods.currentState().call({
+            from: accounts[3],
+            gas: "1000000"
+        });
+        assert(myState == 0);
+    });
+
+    it('Запускаем Pre-Sale от собственника - ОК', async () => {
+        try {
+            await contract.methods.startPreSale().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+
+    });
+
+    it('Проверяем state в отдельном блоке It ', async () => {
+        const myState2 = await contract.methods.currentState().call({
+            from: accounts[0],
+            gas: "1000000"
+        });
+        assert(myState2 == 1);
+    });
+
+    it('Проверяем расчет бонуса для Pre-Sale...', async () => {
+        const bonusPreSale = await contract.methods.calcBonus().call({
+            from: accounts[0],
+            gas: "1000000"
+        });
+        assert(bonusPreSale == 20);
+    });
+
+    it('Переводим 10 эфиров на контракт - должен отбить, меньше минимума-20 эфиров', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[0],
+                    value: 10*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+    
+    it('Проверка баланса контракта - все еще должен быть ноль...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 0);
+    });
+
+    it('Переводим 20 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[0],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+    
+    it('Проверка баланса контракта на наличие 20 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 20);
+    });
+
+    it('Проверка поступления токенов на счет отправителя с учетом бонуса = 120 000...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[0]).call();
+        assert(tokenBalance == 120000 * (10**18));
+    });
+
+    it('Проверка баланса на accounts[0] эфиров...', async () => {
+        const initialBalance = await web3.eth.getBalance(accounts[0]);
+        assert(initialBalance > 0);
+        //console.log("Balance of accounts[0]: ", initialBalance / (10**18));
+    });
+
+    it('Переводим 80 эфиров на контракт - проверка выполнения RPESALE_TOKEN_SUPPLY_LIMIT = 100 эфиров без учета бонусов...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[1],
+                    value: 80*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 100 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 100);
+        //console.log("Balance of contract", cBalance);
+    });
+
+    it('Проверка проданных токенов - должно быть 600тыс. (100 эфиров * 5000 + 20%) ...', async () => {
+        let tokenBalance = await contract.methods.soldTokens().call();
+        assert(tokenBalance == 600000 * (10 ** 18));
+    });
+
+    it('Переводим 5 эфиров на контракт - проверка переполнения RPESALE_TOKEN_SUPPLY_LIMIT = 500 тыс...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[1],
+                    value: 5*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 100 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 100);
+    });
+
+
+    it('Запускаем Pre-ICO от собственника - revert (слишком рано)', async () => {
+        try {
+            await contract.methods.startPreICO().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    // увеличиваем время в ganache-cli на 10 дней
+    it('increase time for 10 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 10],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+    );
+    });
+
+    it('Запускаем Pre-ICO от собственника через 10 дней...', async () => {
+        try {
+            await contract.methods.startPreICO().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Переводим 40 эфиров на контракт - выполнения ограничения первого дня - макс 20 эфиров...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[2],
+                    value: 40*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Переводим 20 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[2],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 120 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 120);
+        //console.log("Balance of contract", cBalance);
+    });
+
+    // увеличиваем время в ganache-cli на 1 день
+    it('increase time for 1 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+        );
+    });
+
+    it('Переводим 40 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[2],
+                    value: 40*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 160 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 160);
+        //console.log("Balance of contract", cBalance);
+    });
+
+    it('Проверка проданных токенов - должно быть 930тыс. (100 эфиров * 5000 + 20%  +   60 * 5000 + 10% = 930 000) ...', async () => {
+        let tokenBalance = await contract.methods.soldTokens().call();
+        assert(tokenBalance == 930000 * (10 ** 18));
+        //console.log(tokenBalance);
+    });
+
+    it('Переводим 20 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[2],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка проданных токенов - должно быть 1040тыс. (100 эфиров * 5000 + 20%  +   80 * 5000 + 10% = 1040 000) ...', async () => {
+        let tokenBalance = await contract.methods.soldTokens().call();
+        assert(tokenBalance == 1040000 * (10 ** 18));
+        //console.log(tokenBalance);
+    });
+
+    it('Переводим 1 эфир на контракт - должен отбить - превышение RPEICO_TOKEN_SUPPLY_LIMIT...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[2],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Запускаем CrowdSale от собственника через 1 дней - слишком рано...', async () => {
+        try {
+            await contract.methods.startCrowdSale().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    // увеличиваем время в ganache-cli на 14 дней
+    it('increase time for 14 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 14],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+        );
+    });
+
+    it('Запускаем CrowdSale от собственника через 15 дней...', async () => {
+        try {
+            await contract.methods.startCrowdSale().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Переводим 20 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[4],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 200 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 200);
+        //console.log("Balance of contract", cBalance);
+    });
+
+    it('Проверка проданных токенов - должно быть 1140тыс. (100 эфиров * 5000 + 20%  +   80 * 5000 + 10%  + 20 * 5000  = 1140) ...', async () => {
+        let tokenBalance = await contract.methods.soldTokens().call();
+        assert(tokenBalance == 1140000 * (10 ** 18));
+        //console.log(tokenBalance);
+    });
+
+    it('Проверка токенов на счете контракта - должно быть 398 860 000...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(contract.options.address).call();
+        assert(tokenBalance == 398860000 * (10**18));
+        //console.log(tokenBalance);
+    });
+
+    it('Передаем токены с дополнительного адреса на account[4]...', async () => {
+        try {
+            await contract.methods.giveAdditionalTokens(accounts[4] ,1000000000 / 100 * 8).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка токенов на счете account[4] должно быть 80 100 000...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[4]).call();
+        assert(tokenBalance == 80100000 * (10**18));
+        //console.log(tokenBalance);
+    });    
+
+    it('Проверка токенов на счете контракта - должно быть 398 860 000, как и раньше...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(contract.options.address).call();
+        assert(tokenBalance == 398860000 * (10**18));
+        //console.log(tokenBalance);
+    });
+
+    it('Переводим токены с адреса адвизоров - должен отбить, слишком рано...', async () => {
+        try {
+            await contract.methods.giveAdvisorsTokens(accounts[4], 1000000000 / 100).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    // увеличиваем время в ganache-cli на 15 дней
+    it('increase time for 15 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 15],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+        );
+    });
+
+    it('Переводим токены с адреса адвизоров...', async () => {
+        try {
+            await contract.methods.giveAdvisorsTokens(accounts[4], 1000000000 / 100).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка токенов на счете контракта - должно быть 398 860 000, как и раньше...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(contract.options.address).call();
+        assert(tokenBalance == 398860000 * (10**18));
+        //console.log(tokenBalance);
+    });
+
+    it('Проверка токенов на счете account[4] должно быть 90 100 000 ...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[4]).call();
+        assert(tokenBalance == 90100000 * (10**18));
+        //console.log(tokenBalance);
+    });    
+
+    it('Переводим токены с адреса баунти...', async () => {
+        try {
+            await contract.methods.giveBountyTokens(accounts[4], 1000000000 / 100).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+
+    it('Проверка токенов на счете контракта - должно быть 398 860 000, как и раньше...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(contract.options.address).call();
+        assert(tokenBalance == 398860000 * (10**18));
+        //console.log(tokenBalance);
+    });
+
+    it('Проверка токенов на счете account[4] должно быть 100 100 000...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[4]).call();
+        assert(tokenBalance == 100100000 * (10**18));
+        //console.log(tokenBalance);
+    });    
+
+    it('Переводим токены с адреса проекта - должен отбить, слишком рано...', async () => {
+        try {
+            await contract.methods.giveProgectTokens(accounts[4], 1000000000 / 2).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    // увеличиваем время в ganache-cli на 324 дня
+    it('increase time for 324 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 324],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+        );
+    });
+
+    it('Переводим токены с адреса проекта - должен отбить, слишком рано...', async () => {
+        try {
+            await contract.methods.giveProgectTokens(accounts[4], 1000000000 / 2).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('increase time for 1 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 1],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+        );
+    });
+
+    it('Переводим токены с адреса проекта - должен вернуть (прошло 365 дней)...', async () => {
+        try {
+            await contract.methods.giveProjectTokens(accounts[4], 1000000000 / 2).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка токенов на счете контракта - должно быть 398 860 000, как и раньше...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(contract.options.address).call();
+        assert(tokenBalance == 398860000 * (10**18));
+        //console.log(tokenBalance);
+    });
+
+    it('Проверка токенов на счете account[4] должно быть 600 100 000 ...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[4]).call();
+        assert(tokenBalance == 600100000 * (10**18));
+        //console.log(tokenBalance);
+    });    
+
+
+    it('Завершаем CrowdSale от собственника...', async () => {
+        try {
+            await contract.methods.finishCrowdSale().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Получаем стадию контракта, должен быть Refunding, т.к SoftCap не набран...', async () => {
+        const myState = await contract.methods.currentState().call({
+            from: accounts[3],
+            gas: "1000000"
+        });
+        assert(myState ==4 );
+        //console.log(myState);
+    });
+
+    it('Проверка токенов на счете account[2] ...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[2]).call();
+        assert(tokenBalance == 440000 * (10**18));
+        //console.log(tokenBalance);
+    });   
+    
+    it('Проверка баланса контракта - должно быть 200 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 200);
+        //console.log("Balance of contract", cBalance);
+    });
+
+    it('Проверка баланса на accounts[2] = 20 эфиров...', async () => {
+        const initialBalance = await web3.eth.getBalance(accounts[2]);
+        assert(initialBalance > 19);
+        console.log("Balance of accounts[2]: ", initialBalance / (10**18));
+    });
+
+    it('Возвращаем средства на account[2]...', async () => {
+        try {
+            await contract.methods.refund().send({
+                from: accounts[2],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка баланса на accounts[2] = 100 эфиров...', async () => {
+        const initialBalance = await web3.eth.getBalance(accounts[2]);
+        assert(initialBalance > 99);
+        console.log("Balance of accounts[2]: ", initialBalance / (10**18));
+    });
+
+    it('Повторно!!! Возвращаем средства на account[2] - функция работает, но баланс уже не добавляется...', async () => {
+        try {
+            await contract.methods.refund().send({
+                from: accounts[2],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка баланса на accounts[2] = 100 эфиров...', async () => {
+        const initialBalance = await web3.eth.getBalance(accounts[2]);
+        assert(initialBalance > 99);
+        console.log("Balance of accounts[2]: ", initialBalance / (10**18));
+    });
+
+    it('Проверка баланса контракта - должно быть 120 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 120);
+        //console.log("Balance of contract", cBalance);
+    }); 
+
+});
+
+
+
+
+
+
+
+
+
+
+
+
+describe('Серия тестов для пути развития - софткап пройден => WorkTime...', () => {
+    let web3 = new Web3(ganache.provider());      // настройка провайдера
+
+    it('Разворачиваем контракт для тестирования...', async () => {
+        accounts = await web3.eth.getAccounts();
+        //    console.log(accounts);
+        //    console.log(await web3.eth.getBalance(accounts[0]));
+            // получаем контракт из скомпилированного ранее файла .json
+        // разворачиваем его в тестовой сети и отправляем транзакцию
+        contract = await new web3.eth.Contract(JSON.parse(compiledContract.interface))
+            .deploy({ data: compiledContract.bytecode })
+            .send({ from: accounts[0], gas: '6000000'});
+
+        //получаем адрес токена
+        const tokenAddress = await contract.methods.token().call();
+
+        //получаем развернутый ранее контракт токена по указанному адресу
+        token = await new web3.eth.Contract(
+        JSON.parse(compiledToken.interface),
+        tokenAddress
+        );
+
+
+    });
+    
+
+    it('Адрес контракта...', async () => {
+        console.log(await contract.options.address);
+    });
+
+    it('Проверка баланса контракта...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        console.log("Balance of contract in Ether: ", cBalance);
+        assert(cBalance == 0);
+    });
+
+    it('Проверка собственника контракта...', async () => {
+        const cOwner = await contract.methods.owner().call();
+        assert.equal(accounts[0], cOwner);
+    });
+
+    it('Получаем стадию контракта, по умолчанию это init', async () => {
+        const myState = await contract.methods.currentState().call({
+            from: accounts[3],
+            gas: "1000000"
+        });
+        assert(myState == 0);
+    });
+
+    it('Запускаем Pre-Sale от постороннего пользователя - revert', async () => {
+        // правильным завершением этого теста является наличие ошибки
+        try {
+            await contract.methods.startPreSale().send({
+                from: accounts[3],
+                gas: "1000000"
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Снова получаем стадию контракта, все еще init', async () => {
+        const myState = await contract.methods.currentState().call({
+            from: accounts[3],
+            gas: "1000000"
+        });
+        assert(myState == 0);
+    });
+
+    it('Запускаем Pre-Sale от собственника - ОК', async () => {
+        try {
+            await contract.methods.startPreSale().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+
+    });
+
+    it('Проверяем state в отдельном блоке It ', async () => {
+        const myState2 = await contract.methods.currentState().call({
+            from: accounts[0],
+            gas: "1000000"
+        });
+        assert(myState2 == 1);
+    });
+
+    it('Проверяем расчет бонуса для Pre-Sale...', async () => {
+        const bonusPreSale = await contract.methods.calcBonus().call({
+            from: accounts[0],
+            gas: "1000000"
+        });
+        assert(bonusPreSale == 20);
+    });
+
+    it('Переводим 10 эфиров на контракт - должен отбить, меньше минимума-20 эфиров', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[0],
+                    value: 10*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+    
+    it('Проверка баланса контракта - все еще должен быть ноль...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 0);
+    });
+
+    it('Переводим 20 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[0],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+    
+    it('Проверка баланса контракта на наличие 20 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 20);
+    });
+
+    it('Проверка поступления токенов на счет отправителя с учетом бонуса = 120 000...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[0]).call();
+        assert(tokenBalance == 120000 * (10**18));
+    });
+
+    it('Проверка баланса на accounts[0] эфиров...', async () => {
+        const initialBalance = await web3.eth.getBalance(accounts[0]);
+        assert(initialBalance > 0);
+        //console.log("Balance of accounts[0]: ", initialBalance / (10**18));
+    });
+
+    it('Переводим 80 эфиров на контракт - проверка выполнения RPESALE_TOKEN_SUPPLY_LIMIT = 100 эфиров без учета бонусов...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[1],
+                    value: 80*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 100 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 100);
+        //console.log("Balance of contract", cBalance);
+    });
+
+    it('Проверка проданных токенов - должно быть 600тыс. (100 эфиров * 5000 + 20%) ...', async () => {
+        let tokenBalance = await contract.methods.soldTokens().call();
+        assert(tokenBalance == 600000 * (10 ** 18));
+    });
+
+    it('Переводим 5 эфиров на контракт - проверка переполнения RPESALE_TOKEN_SUPPLY_LIMIT = 500 тыс...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[1],
+                    value: 5*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 100 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 100);
+    });
+
+
+    it('Запускаем Pre-ICO от собственника - revert (слишком рано)', async () => {
+        try {
+            await contract.methods.startPreICO().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    // увеличиваем время в ganache-cli на 10 дней
+    it('increase time for 10 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 10],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+    );
+    });
+
+    it('Запускаем Pre-ICO от собственника через 10 дней...', async () => {
+        try {
+            await contract.methods.startPreICO().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Переводим 40 эфиров на контракт - выполнения ограничения первого дня - макс 20 эфиров...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[2],
+                    value: 40*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Переводим 20 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[2],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 120 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 120);
+        //console.log("Balance of contract", cBalance);
+    });
+
+    // увеличиваем время в ganache-cli на 1 день
+    it('increase time for 1 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+        );
+    });
+
+    it('Переводим 40 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[2],
+                    value: 40*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 160 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 160);
+        //console.log("Balance of contract", cBalance);
+    });
+
+    it('Проверка проданных токенов - должно быть 930тыс. (100 эфиров * 5000 + 20%  +   60 * 5000 + 10% = 930 000) ...', async () => {
+        let tokenBalance = await contract.methods.soldTokens().call();
+        assert(tokenBalance == 930000 * (10 ** 18));
+        //console.log(tokenBalance);
+    });
+
+    it('Переводим 20 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[2],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка проданных токенов - должно быть 1040тыс. (100 эфиров * 5000 + 20%  +   80 * 5000 + 10% = 1040 000) ...', async () => {
+        let tokenBalance = await contract.methods.soldTokens().call();
+        assert(tokenBalance == 1040000 * (10 ** 18));
+        //console.log(tokenBalance);
+    });
+
+    it('Переводим 1 эфир на контракт - должен отбить - превышение RPEICO_TOKEN_SUPPLY_LIMIT...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[2],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Запускаем CrowdSale от собственника через 1 дней - слишком рано...', async () => {
+        try {
+            await contract.methods.startCrowdSale().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    // увеличиваем время в ganache-cli на 14 дней
+    it('increase time for 14 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 14],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+        );
+    });
+
+    it('Запускаем CrowdSale от собственника через 15 дней...', async () => {
+        try {
+            await contract.methods.startCrowdSale().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Переводим 20 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[4],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 200 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 200);
+        //console.log("Balance of contract", cBalance);
+    });
+
+    it('Проверка проданных токенов - должно быть 1140тыс. (100 эфиров * 5000 + 20%  +   80 * 5000 + 10%  + 20 * 5000  = 1140) ...', async () => {
+        let tokenBalance = await contract.methods.soldTokens().call();
+        assert(tokenBalance == 1140000 * (10 ** 18));
+        //console.log(tokenBalance);
+    });
+
+    it('Проверка токенов на счете контракта - должно быть 398 860 000...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(contract.options.address).call();
+        assert(tokenBalance == 398860000 * (10**18));
+        //console.log(tokenBalance);
+    });
+
+    it('Передаем токены с дополнительного адреса на account[4]...', async () => {
+        try {
+            await contract.methods.giveAdditionalTokens(accounts[4] ,1000000000 / 100 * 8).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка токенов на счете account[4] должно быть 80 100 000...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[4]).call();
+        assert(tokenBalance == 80100000 * (10**18));
+        //console.log(tokenBalance);
+    });    
+
+    it('Проверка токенов на счете контракта - должно быть 398 860 000, как и раньше...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(contract.options.address).call();
+        assert(tokenBalance == 398860000 * (10**18));
+        //console.log(tokenBalance);
+    });
+
+    it('Переводим токены с адреса адвизоров - должен отбить, слишком рано...', async () => {
+        try {
+            await contract.methods.giveAdvisorsTokens(accounts[4], 1000000000 / 100).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    // увеличиваем время в ganache-cli на 15 дней
+    it('increase time for 15 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 15],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+        );
+    });
+
+    it('Переводим токены с адреса адвизоров...', async () => {
+        try {
+            await contract.methods.giveAdvisorsTokens(accounts[4], 1000000000 / 100).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка токенов на счете контракта - должно быть 398 860 000, как и раньше...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(contract.options.address).call();
+        assert(tokenBalance == 398860000 * (10**18));
+        //console.log(tokenBalance);
+    });
+
+    it('Проверка токенов на счете account[4] должно быть 90 100 000 ...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[4]).call();
+        assert(tokenBalance == 90100000 * (10**18));
+        //console.log(tokenBalance);
+    });    
+
+    it('Переводим токены с адреса баунти...', async () => {
+        try {
+            await contract.methods.giveBountyTokens(accounts[4], 1000000000 / 100).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+
+    it('Проверка токенов на счете контракта - должно быть 398 860 000, как и раньше...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(contract.options.address).call();
+        assert(tokenBalance == 398860000 * (10**18));
+        //console.log(tokenBalance);
+    });
+
+    it('Проверка токенов на счете account[4] должно быть 100 100 000...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[4]).call();
+        assert(tokenBalance == 100100000 * (10**18));
+        //console.log(tokenBalance);
+    });    
+
+    it('Переводим токены с адреса проекта - должен отбить, слишком рано...', async () => {
+        try {
+            await contract.methods.giveProgectTokens(accounts[4], 1000000000 / 2).send({
+                from: accounts[0],
+                gas: '1000000'
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+
+    it('Переводим 90 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[6],
+                    value: 90*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+
+    it('Переводим еще 90 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[7],
+                    value: 90*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Переводим еще 95 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[8],
+                    value: 95*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('Проверка проданных токенов - должно быть более 2 млн...', async () => {
+        let tokenBalance = await contract.methods.soldTokens().call();
+        assert(tokenBalance > 2000000 * (10 ** 18));
+        //console.log(tokenBalance);
+    });
+
+    // увеличиваем время в ganache-cli на 15 дней
+    it('increase time for 15 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 15],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+        );
+    });
+
+
+    it('Завершаем CrowdSale от собственника...', async () => {
+        try {
+            await contract.methods.finishCrowdSale().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Получаем стадию контракта, должен быть WorkTime, т.к SoftCap набран...', async () => {
+        const myState = await contract.methods.currentState().call({
+            from: accounts[3],
+            gas: "1000000"
+        });
+        assert(myState ==5 );
+        //console.log(myState);
+    });
+
+    
+    it('Проверка баланса контракта...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        //assert(cBalance == 200);
+        console.log("Balance of contract", cBalance);
+    });
+
+    it('Проверка состояния блокировки внешних переводов...', async () => {
+        let cLock = await token.methods.lockTransfers().call();
+        assert(cLock == false);
+        //console.log("lockTransfers:", cLock);
+    });
+
+    it('Установим состояние блокировки внешних переводов в true...', async () => {
+        try {
+            await contract.methods.blockExternalTransfer().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка состояния блокировки внешних переводов на true...', async () => {
+        let cLock = await token.methods.lockTransfers().call();
+        assert(cLock == true);
+        //console.log("lockTransfers:", cLock);
+    });
+
+    it('Делаем внешний перевод - должен отбить...', async () => {
+        try {
+            await token.methods.transfer(accounts[8], 1000).send({
+                from: accounts[7],
+                gas: "1000000"
+            });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Установим состояние блокировки внешних переводов в false...', async () => {
+        try {
+            await contract.methods.unBlockExternalTransfer().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Делаем внешний перевод - должен принять...', async () => {
+        try {
+            await token.methods.transfer(accounts[8], 1000).send({
+                from: accounts[7],
+                gas: "1000000"
+            });
+            assert(true);
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+
+
+    it('Возвращаем средства на account[2] - должен отбить, тк refund не работает в этой стадии...', async () => {
+        try {
+            await contract.methods.refund().send({
+                from: accounts[2],
+                gas: "1000000"
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Переводим средства с контракта (450 эфиров) на account[6] от посторонней учетки - должен отбить ...', async () => {
+        try {
+            await contract.methods.withdrawProfit(accounts[6], 450 * 10 ** 18 ).send({
+                from: accounts[6],
+                gas: "1000000"
+            });
+            assert(false);    
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Проверка баланса на accounts[6]...', async () => {
+        accBalance = web3.utils.fromWei(await web3.eth.getBalance(accounts[6]), 'ether');
+        assert(accBalance < 100 );
+        console.log("Balance of accounts[6]: ", accBalance );
+    });
+
+    it('Переводим средства с контракта (450 эфиров) на account[6] от собственника ...', async () => {
+        try {
+            await contract.methods.withdrawProfit(accounts[6], 450 * 10 ** 18 ).send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка баланса контракта - должно быть 25 эфиров...', async () => {
+        let cBalance = web3.utils.fromWei(await contract.methods.getBalance().call(), 'ether');
+        assert(cBalance == 25);
+        //console.log("Balance of contract", cBalance);
+    });
+
+    it('Проверка баланса на accounts[6] - более 450 эфиров...', async () => {
+        accBalance = web3.utils.fromWei(await web3.eth.getBalance(accounts[6]), 'ether');
+        assert(accBalance > 450);
+        console.log("Balance of accounts[6]: ", accBalance);
+    });
+
+
+});
+
+describe('Серия тестов для проверки автоматической смены стадий по таймауту...', () => {
+    let web3 = new Web3(ganache.provider());      // настройка провайдера
+
+    it('Разворачиваем контракт для тестирования...', async () => {
+
+        accounts = await web3.eth.getAccounts();
+        contract = await new web3.eth.Contract(JSON.parse(compiledContract.interface))
+            .deploy({ data: compiledContract.bytecode })
+            .send({ from: accounts[0], gas: '6000000'});
+    });
+
+    it('Получаем стадию контракта, по умолчанию это init', async () => {
+        const myState = await contract.methods.currentState().call({
+            from: accounts[3],
+            gas: "1000000"
+        });
+        assert(myState == 0);
+    });
+
+    it('Запускаем Pre-Sale от собственника - ОК', async () => {
+        try {
+            await contract.methods.startPreSale().send({
+                from: accounts[0],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+
+    });
+
+    it('Проверяем state - должен быть Pre-sale', async () => {
+        const myState2 = await contract.methods.currentState().call({
+            from: accounts[0],
+            gas: "1000000"
+        });
+        assert(myState2 == 1);
+    });
+
+    it('increase time for 5 days', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 5],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+    );
+    });
+
+    it('Переводим 20 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[5],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('increase time for 4 days - last day of Per-Sale', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 4],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+    );
+    });    
+
+    it('Переводим 20 эфиров на контракт - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[6],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+            console.log(error);
+        }
+    });
+
+    it('increase time for 1 days - Pre-Sale stage is closed', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 4],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+    );
+    });    
+
+    it('Проверка баланса на accounts[7] - более 25 эфиров...', async () => {
+        accBalance = web3.utils.fromWei(await web3.eth.getBalance(accounts[7]), 'ether');
+        assert(accBalance > 25);
+        //console.log("Balance of accounts[7]: ", accBalance);
+    });
+
+
+    it('Переводим 20 эфиров на контракт от account[7] - должен отбить...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[7],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Проверяем state - должен быть все еще Pre-sale но на паузе...', async () => {
+        const myState2 = await contract.methods.currentState().call({
+            from: accounts[0],
+            gas: "1000000"
+        });
+        assert(myState2 == 1);
+    });
+
+    it('increase time for 30 days...', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 30],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+    );
+    });    
+
+    it('Переводим 20 эфиров на контракт от account[7] - должен сменить stage и принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[7],
+                    value: 20*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверяем state - должен быть PreICO...', async () => {
+        const myState2 = await contract.methods.currentState().call({
+            from: accounts[0],
+            gas: "1000000"
+        });
+        assert(myState2 == 2);
+    });
+
+    it('Проверка токенов на счетe 9 должно быть 0...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[9]).call();
+        assert(tokenBalance == 0);
+        //console.log(tokenBalance / (10**18));
+    });
+
+
+    it('Переводим 1 эфир на контракт от account[9] - должен принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[9],
+                    value: 1*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка токенов на счетe 9 должно быть 5000 + 10% = 5500...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[9]).call();
+        assert(tokenBalance == 5500 * (10**18));
+        //console.log(tokenBalance / (10**18));
+    });
+
+
+
+    it('increase time for 15 days - PreICO is closed...', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 30],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+    );
+    }); 
+
+    it('Переводим 1 эфир на контракт от account[9] - должен отбить...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[9],
+                    value: 1*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('increase time for 30 days - pause is passed...', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 30],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+    );
+    }); 
+
+    it('Переводим 1 эфир на контракт от account[9] - должен сменить stage и принять...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[9],
+                    value: 1*10**18,
+                    gas: '1000000'
+                });
+            assert(true);
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+
+    it('Проверяем state - должен быть CrowdSale...', async () => {
+        const myState2 = await contract.methods.currentState().call({
+            from: accounts[0],
+            gas: "1000000"
+        });
+        assert(myState2 == 3);
+    });
+
+    it('Проверка токенов на счетe 9 должно быть 5500 + 5000 = 10500...', async () => {
+        let tokenBalance = await contract.methods.getBalanceTokens(accounts[9]).call();
+        assert(tokenBalance == 10500 * (10**18));
+        //console.log(tokenBalance / (10**18));
+    });
+
+    it('increase time for 30 days - CrowdSale is closed...', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 30],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+    );
+    });
+
+    it('Переводим 1 эфир на контракт от account[9] - должен отбить - пауза...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[9],
+                    value: 1*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Проверяем state - должен быть все еще CrowdSale...', async () => {
+        const myState2 = await contract.methods.currentState().call({
+            from: accounts[0],
+            gas: "1000000"
+        });
+        assert(myState2 == 3);
+    });
+
+    it('increase time for 31 days - Pause CrowdSale is passed...', async () => {
+        const myVal = await new Promise((resolve, reject) =>
+        web3.currentProvider.sendAsync({
+            jsonrpc: "2.0",
+            method: "evm_increaseTime",
+            params: [60 * 60 * 24 * 31],
+            id: new Date().getTime()
+        }, (error, result) => error ? reject(error) : resolve(result.result))
+    );
+    });
+
+    it('Переводим 1 эфир на контракт от account[9] - должен принять, но при этом перейти в стадию Refunding (софт кап не достигнут)...', async () => {
+        try {
+            let funders = await contract.methods.AddBalanceContract().send({
+                    from: accounts[9],
+                    value: 1*10**18,
+                    gas: '1000000'
+                });
+            assert(false);
+        } catch (error) {
+            assert(error);
+        }
+    });
+
+    it('Проверяем state - должен быть Refunding...', async () => {
+        const myState2 = await contract.methods.currentState().call({
+            from: accounts[0],
+            gas: "1000000"
+        });
+        assert(myState2 == 4);
+        //console.log(myState2);
+    });
+
+    it('Проверка баланса на accounts[7] - 80 эфиров ...', async () => {
+        accBalance = web3.utils.fromWei(await web3.eth.getBalance(accounts[7]), 'ether');
+        assert(accBalance > 79);
+        //console.log("Balance of accounts[7]: ", accBalance);
+    });
+
+    it('Возвращаем средства на account[7]...', async () => {
+        try {
+            await contract.methods.refund().send({
+                from: accounts[7],
+                gas: "1000000"
+            });
+            assert(true);    
+        } catch (error) {
+            assert(false);
+        }
+    });
+
+    it('Проверка баланса на accounts[7] - 100 эфиров...', async () => {
+        accBalance = web3.utils.fromWei(await web3.eth.getBalance(accounts[7]), 'ether');
+        assert(accBalance > 99);
+        //console.log("Balance of accounts[7]: ", accBalance);
+    });
+
+
+});
