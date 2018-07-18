@@ -2,3 +2,4 @@ node_modules/
 build/
 constructor-ABI
 read-me.txt
+.gitignore
